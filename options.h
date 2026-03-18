@@ -28,7 +28,8 @@ class Option
             throw std::invalid_argument("Invalid Type: Must be Call or Put");
         }
     }
-    double payoff(int loops, int max_threads) //logic for payoff is the same for all options, hence it is better to implement this in base class.
+    virtual std::unique_ptr<Option> clone() =0; //we use this clone function for copying the object instead of standard copy constructor to prevent object slicing. Because delta() is a member function of the base Option class, the this pointer only knows it is pointing to an Option. If the actual object is a BarrierOption and we try to do a standard copy, C++ will only copy the base Option attributes and chop off the Barrier parameter.
+    double payoff(int loops, int max_threads) const //logic for payoff is the same for all options, hence it is better to implement this in base class.
     {
         double total = 0;
         unsigned int num_threads = max_threads;
@@ -53,6 +54,37 @@ class Option
         double av = total/loops;
         av = av*exp(-this->rate*this->Time);
         return av;
+    }
+    double delta(int loops, int max_threads)
+    {
+        double d;
+        double temp = this->StartingPrice;
+        double h = 0.001*this->StartingPrice;
+        this->StartingPrice-=h;
+        double Vd = this->payoff(loops,max_threads);
+        this->StartingPrice+=2*h;
+        double Vu = this->payoff(loops,max_threads);
+        d = (Vu-Vd)/(2*h);
+        this->StartingPrice=temp;
+        return d;
+    } //save and restore method. changes the member variable, hence not thread safe for when spawning multiple threads in main()
+
+    double delta2(int loops, int max_threads)
+    {   double d;
+        double h = 0.001*this->StartingPrice;
+        std::unique_ptr<Option> OptionUp, OptionDown;
+        OptionUp = this->clone();
+        OptionUp->setStartingPrice(OptionUp->StartingPrice+h);
+        OptionDown = this->clone();
+        OptionDown->setStartingPrice(OptionDown->StartingPrice-h);
+        double Vu = OptionUp->payoff(loops,max_threads);
+        double Vd = OptionDown->payoff(loops,max_threads);
+        d = (Vu-Vd)/(2*h);
+        return d;
+    }// clone method. This is thread safe.
+    void setStartingPrice(double S)
+    {
+        this->StartingPrice = S;
     }
     virtual ~Option(){}
 };
@@ -105,6 +137,11 @@ class BarrierOption : public Option
     BarrierOption(double S0, double K, double r, double s, double T,std::string t, double b)
     : Option(S0, K, r, s, T,t) 
     {barrier = b;}
+    std::unique_ptr<Option> clone() override
+    {
+        std::unique_ptr<Option> Ba = std::make_unique<BarrierOption>(*this);
+        return Ba;
+    }
     ~BarrierOption() override
     {}
 };
@@ -139,6 +176,11 @@ class EuropeanOption : public Option
     EuropeanOption(double S0, double K, double r, double s, double T,std::string t)
     : Option(S0, K, r, s, T,t) 
     {}
+    std::unique_ptr<Option> clone() override
+    {
+        std::unique_ptr<Option> Eu = std::make_unique<EuropeanOption>(*this);
+        return Eu;
+    }
     ~EuropeanOption() override
     {}
 
@@ -187,6 +229,11 @@ class AsianOption : public Option
     AsianOption(double S0, double K, double r, double s, double T,std::string t)
     : Option(S0, K, r, s, T,t) 
     {}
+    std::unique_ptr<Option> clone() override
+    {
+        std::unique_ptr<Option> As = std::make_unique<AsianOption>(*this);
+        return As;
+    }
     ~AsianOption() override
     {}
 };
