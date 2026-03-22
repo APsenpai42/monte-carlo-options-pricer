@@ -24,13 +24,13 @@ int main() {
                 bprice =  BOption->payoff(1000000, num_threads/4);
             });
             std::thread t4([&EuOption, &eudeltaC, num_threads]() {
-                eudeltaC =  EuOption->delta2(1000000, num_threads/4);
+                eudeltaC =  EuOption->delta2(1000000, num_threads/4, 42);
             });
             t1.join();
             t2.join();
             t3.join();
             t4.join();
-            eudeltaS = EuOption->delta(1000000,num_threads);
+            eudeltaS = EuOption->delta(1000000,num_threads, 42);
             std::cout<<"Price of the European Option - "<<euprice<<"\n";
             std::cout<<"Price of the Asian Option - "<<aprice<<"\n";
             std::cout<<"Price of the Barrier Option - "<<bprice<<"\n";
