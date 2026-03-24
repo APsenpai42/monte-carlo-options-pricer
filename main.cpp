@@ -31,11 +31,13 @@ int main() {
             t3.join();
             t4.join();
             eudeltaS = EuOption->delta(1000000,num_threads, 42);
+            double Agamma = AOption->gamma(1000000,num_threads);
             std::cout<<"Price of the European Option - "<<euprice<<"\n";
             std::cout<<"Price of the Asian Option - "<<aprice<<"\n";
             std::cout<<"Price of the Barrier Option - "<<bprice<<"\n";
             std::cout<<"Delta of the European Option(clone method) - "<<eudeltaC<<"\n";
             std::cout<<"Delta of the European Option(save and restore method) - "<<eudeltaS<<"\n";
+            std::cout<<"Gamma of the Asian Option - "<<Agamma<<"\n";
         }
             
         catch(const std::exception& e){

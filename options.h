@@ -86,6 +86,24 @@ class Option
         return d;
     }// clone method. This is thread safe.
 
+    double gamma(int loops, int max_threads, int seed = 0)
+    {
+        while(seed == 0)
+            seed = std::random_device{}();
+        double g;
+        double h = 0.001*this->StartingPrice;
+        std::unique_ptr<Option> OptionUp, OptionDown;
+        OptionUp = this->clone();
+        OptionUp->setStartingPrice(OptionUp->StartingPrice+h);
+        OptionDown = this->clone();
+        OptionDown->setStartingPrice(OptionDown->StartingPrice-h);
+        double Vu = OptionUp->payoff(loops,max_threads, seed);
+        double Vd = OptionDown->payoff(loops,max_threads, seed);
+        double Vb = this->payoff(loops,max_threads, seed);
+        g = (Vu - 2*Vb + Vd)/(h*h);
+        return g;
+    }
+
     //in both of these, each payoff creates an independent set of 'loops' paths using the RNG. So Vup is created in a different 'universe' than Vdown. so even with 1000000 simulations, there is some error in both. So, we need to ensure that a common random number sequence for both Vup and Vdown.
     void setStartingPrice(double S)
     {
