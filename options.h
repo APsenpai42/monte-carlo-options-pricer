@@ -55,7 +55,7 @@ class Option
         av = av*exp(-this->rate*this->Time);
         return av;
     }
-    double delta(int loops, int max_threads, int seed = 0)
+    double delta2(int loops, int max_threads, int seed = 0)
     {   while(seed == 0)
             seed = std::random_device{}();
         double d;
@@ -70,7 +70,7 @@ class Option
         return d;
     } //save and restore method. changes the member variable, hence not thread safe for when spawning multiple threads in main()
 
-    double delta2(int loops, int max_threads, int seed = 0)
+    double delta(int loops, int max_threads, int seed = 0)
     {   while(seed ==0)
             seed = std::random_device{}();
         double d;
@@ -104,10 +104,30 @@ class Option
         return g;
     }
 
-    //in both of these, each payoff creates an independent set of 'loops' paths using the RNG. So Vup is created in a different 'universe' than Vdown. so even with 1000000 simulations, there is some error in both. So, we need to ensure that a common random number sequence for both Vup and Vdown.
+    //in both of these, each payoff creates an independent set of 'loops' paths using the RNG. So Vup is created in a different 'universe' than Vdown. so even with 1000000 simulations, there is some error in both. So, we need to ensure that a common random number sequence for both Vup and Vdown. (implemented above)
+    double vega(int loops, int max_threads, int seed = 0)
+    {
+        while(seed == 0)
+            seed = std::random_device{}();
+        double v;
+        double h = 0.001*this->sigma;
+        std::unique_ptr<Option> OptionUp, OptionDown;
+        OptionUp = this->clone();
+        OptionUp->setVolatility(OptionUp->sigma+h);
+        OptionDown = this->clone();
+        OptionDown->setVolatility(OptionDown->sigma-h);
+        double Vu = OptionUp->payoff(loops,max_threads, seed);
+        double Vd = OptionDown->payoff(loops,max_threads, seed);
+        v = (Vu-Vd)/(2*h);
+        return v/100.0; //dividing by 100 because the v calculates per unit change. since we pass volatility(sigma) as a decimal value instead of % value, the v we get here is the change in price per 1 change in volatility, which in terms of percentage is actually a 100% change. so, we need to divide this by 100. we can avoid this by passing volatility as a percentage value instead, and modifying the final price formula, but the standard practice is to just pass sigma as a decimal as we have done, so that we don't have to divide by 100 in heavy formulas and keep the functions cleaner.
+    }
     void setStartingPrice(double S)
     {
         this->StartingPrice = S;
+    }
+    void setVolatility(double sig)
+    {
+        this->sigma = sig;
     }
     virtual ~Option(){}
 };
