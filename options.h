@@ -9,12 +9,14 @@
 #include<new>
 #include<vector>
 #include<stdexcept>
+#include "threadpool.h"
 constexpr const int padding = std::hardware_destructive_interference_size/sizeof(double); //to prevent false sharing, we use padding
 class Option
 {
     protected:
     double StartingPrice, StrikingPrice, rate, sigma, Time;
     std :: string tag;
+    static ThreadPool pool;
     //virtual double generate_path() const= 0; //generate_path has a different return type for each option, and isn't ever being called directly from main. Therefore, we shouldn't make it a base class virtual function.
     virtual void worker(int loops,double &result, unsigned int seed =0) const = 0; //const ensures that the worker is read-only and doesn't modify the members, because during parallel processing, multiple threads will be accessing the same object instance at the same time to read those variables
     public:
@@ -34,29 +36,33 @@ class Option
         double total = 0;
         unsigned int num_threads = max_threads;
         std::vector<double> results(padding*num_threads); //padded vector. CPU cores read memory in chunks called Cache Lines. a single cache line can hold 8 of your results at once. Different cores want the same cache line at once. hence we store different results in different cache lines, using padding.
-        std::vector<std::thread> threads(num_threads);
+        //std::vector<std::thread> threads(num_threads);
         unsigned int base_loops = loops/num_threads;
         unsigned int remainder = loops%num_threads;
         for(int i = 0;i<num_threads;i++)
         {   
             //std::thread t(&Option::worker, this, base_loops + (i<remainder? 1:0), std::ref(results[padding*i]));
             int thread_loops = base_loops + (i < remainder ? 1 : 0);
-            std::thread t([this, thread_loops, &result = results[padding * i], seed, i]() {
-                this->worker(thread_loops, result, seed+i);
+            // std::thread t([this, thread_loops, &result = results[padding * i], seed, i]() {
+            //     this->worker(thread_loops, result, seed == 0? seed: seed+i);
+            // }); //old implementation without threadpooling
+            Option::pool.addjob([this, thread_loops, &result = results[padding * i], seed, i]() {
+                this->worker(thread_loops, result, seed == 0? seed: seed+i);
             }); //lambda function inside payoff has the same access rights as payoff, so in this case thread isn't the one calling the worker, which might fail otherwise due to class access modifiers.
-            threads[i] = std::move(t);
+            //threads[i] = std::move(t);
         }
+        Option::pool.wait_finished();
         for(int i = 0;i< num_threads;i++)
         {   
-            threads[i].join();
+            // threads[i].join();
             total+=results[padding*i];
         }
         double av = total/loops;
         av = av*exp(-this->rate*this->Time);
         return av;
     }
-    double delta2(int loops, int max_threads, int seed = 0)
-    {   while(seed == 0)
+    double delta2(int loops, int max_threads, unsigned int seed = 0)
+    {   while(seed == 0 || seed > UINT32_MAX-max_threads)
             seed = std::random_device{}();
         double d;
         double temp = this->StartingPrice;
@@ -70,8 +76,8 @@ class Option
         return d;
     } //save and restore method. changes the member variable, hence not thread safe for when spawning multiple threads in main()
 
-    double delta(int loops, int max_threads, int seed = 0)
-    {   while(seed ==0)
+    double delta(int loops, int max_threads, unsigned int seed = 0)
+    {   while(seed == 0 || seed > UINT32_MAX-max_threads)
             seed = std::random_device{}();
         double d;
         double h = 0.001*this->StartingPrice;
@@ -86,9 +92,9 @@ class Option
         return d;
     }// clone method. This is thread safe.
 
-    double gamma(int loops, int max_threads, int seed = 0)
+    double gamma(int loops, int max_threads, unsigned int seed = 0)
     {
-        while(seed == 0)
+        while(seed == 0 || seed > UINT32_MAX-max_threads)
             seed = std::random_device{}();
         double g;
         double h = 0.001*this->StartingPrice;
@@ -105,9 +111,9 @@ class Option
     }
 
     //in both of these, each payoff creates an independent set of 'loops' paths using the RNG. So Vup is created in a different 'universe' than Vdown. so even with 1000000 simulations, there is some error in both. So, we need to ensure that a common random number sequence for both Vup and Vdown. (implemented above)
-    double vega(int loops, int max_threads, int seed = 0)
+    double vega(int loops, int max_threads, unsigned int seed = 0)
     {
-        while(seed == 0)
+        while(seed == 0 || seed > UINT32_MAX-max_threads)
             seed = std::random_device{}();
         double v;
         double h = 0.001*this->sigma;
