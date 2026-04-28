@@ -140,10 +140,10 @@ class Option
 class BarrierOption : public Option
 {   
     double barrier;
-    double generate_path(const std::vector<double> &Z) const
+    double generate_path(const std::vector<double> &Z, double t1, double t2) const
     {   
         double daily_price;
-        const double t1 = (rate-0.5*sigma*sigma)*(1.0/252.0), t2 = sigma * sqrt(1.0/252.0);
+        //const double t1 = (rate-0.5*sigma*sigma)*(1.0/252.0), t2 = sigma * sqrt(1.0/252.0);
         // thread_local std::mt19937 mt(std::random_device{}());  
         // thread_local std::normal_distribution<double> nd(0,1);
         // Z=nd(mt);
@@ -169,19 +169,48 @@ class BarrierOption : public Option
         std::mt19937 mt(seed == 0? std::random_device{}():seed);
         std::normal_distribution<double> nd(0,1);
         std::vector<double> Z(252*Time);
-        for(int i=0;i<loops;i++)
-        {   
-            for(int j=0;j<252*Time;j++)
-                Z[j] = nd(mt);
-            double ST = this->generate_path(Z);
-            double payoff;
-            if(ST==0.0)
-                payoff = 0.0;            
-            else if(tag == "CALL")
-                payoff = std::max(ST-this->StrikingPrice,0.0);
-            else if(tag == "PUT")
-                payoff = std::max(this->StrikingPrice-ST,0.0);
-            total+=payoff;
+        const double t1 = (rate-0.5*sigma*sigma)*(1.0/252.0), t2 = sigma * sqrt(1.0/252.0);
+        // for(int i=0;i<loops;i++)
+        // {   
+        //     for(int j=0;j<252*Time;j++)
+        //         Z[j] = nd(mt);
+        //     double ST = this->generate_path(Z,t1,t2);
+        //     double payoff;
+        //     if(ST==0.0)
+        //         payoff = 0.0;            
+        //     else if(tag == "CALL")
+        //         payoff = std::max(ST-this->StrikingPrice,0.0);
+        //     else if(tag == "PUT")
+        //         payoff = std::max(this->StrikingPrice-ST,0.0);
+        //     total+=payoff;
+        // }
+        if(tag == "CALL")
+        {
+            for(int i=0;i<loops;i++)
+            {   
+                for(int j=0;j<252*Time;j++)
+                    Z[j] = nd(mt);
+                double ST = this->generate_path(Z,t1,t2);
+                double payoff;
+                if(ST==0.0)
+                    payoff = 0.0;            
+                else payoff = std::max(ST-this->StrikingPrice,0.0);
+                total+=payoff;
+            }
+        }   
+        else if(tag == "PUT")
+        {
+            for(int i=0;i<loops;i++)
+            {   
+                for(int j=0;j<252*Time;j++)
+                    Z[j] = nd(mt);
+                double ST = this->generate_path(Z,t1,t2);
+                double payoff;
+                if(ST==0.0)
+                    payoff = 0.0;            
+                else payoff = std::max(this->StrikingPrice-ST,0.0);
+                total+=payoff;
+            }
         }
         result = total;
     }
@@ -199,13 +228,13 @@ class BarrierOption : public Option
 };
 class EuropeanOption : public Option
 {
-    double generate_path(double Z) const
+    double generate_path(double Z, double t1, double t2) const
     {
         double FinalPrice;
         //thread_local std::mt19937 mt(std::random_device{}());  //thread_local instead of static, works exactly like static but makes a separate copy for each thread. random_device seed ensures that the internal state/sequence is different for each thread. doesn't work with time as the seed.
         //thread_local std::normal_distribution<double> nd(0,1); //we can also not use static/thread_local, but then it's computationally heavy as each loop creates a new state, uses only 1 number and then discards the rest. the sequence can generate 2^19937 - 1 numbers, which is significatly more than the number of loops in each thread
         //Z=nd(mt);
-        FinalPrice = StartingPrice*exp((rate-0.5*sigma*sigma)*Time + sigma * sqrt(Time) * Z);
+        FinalPrice = StartingPrice*exp(t1 + t2 * Z);
         return FinalPrice;
     }
     void worker(int loops, double &result, unsigned int seed = 0) const override
@@ -214,16 +243,26 @@ class EuropeanOption : public Option
         std::mt19937 mt(seed == 0? std::random_device{}():seed);  //the RNG engines were moved one level up to implement thread pooling in later stages (reusing old threads for new objects). also, the static/thread local have been dropped to avoid the same thread pool bug.
         std::normal_distribution<double> nd(0,1); //the main part was removing static/thread_local so that each task builds a fresh RNG engine. This ensures the engine restarts from the beginning of the sequence using the identical seed, guaranteeing matching paths for Common Random Numbers. However, moving the engine to worker was necessary for performance, as the engine will now be created once per 250000 loops instead of 250000 times (once each loop)
         // we don't move this one level higher (to payoff), because mt19937 is not thread safe, and if 4 threads are reaching 1 RNG engine at the same time in payoff, it will cause data race and scheduling chaos
-        for(int i=0;i<loops;i++)
-        {   double Z = nd(mt);
-            double ST = this->generate_path(Z);
-            double payoff;
-            
-            if(tag == "CALL")
+        const double t1 = (rate-0.5*sigma*sigma)*Time, t2 = sigma * sqrt(Time);
+        if(tag == "CALL")
+        {
+            for(int i=0;i<loops;i++)
+            {   double Z = nd(mt);
+                double ST = this->generate_path(Z, t1, t2);
+                double payoff;
                 payoff = std::max(ST-this->StrikingPrice,0.0);
-            else if(tag == "PUT")
+                total+=payoff;
+            }
+        }
+        else if(tag == "PUT")
+        {
+            for(int i=0;i<loops;i++)
+            {   double Z = nd(mt);
+                double ST = this->generate_path(Z, t1, t2);
+                double payoff;
                 payoff = std::max(this->StrikingPrice-ST,0.0);
-            total+=payoff;
+                total+=payoff;
+            }
         }
         result = total;
     }
@@ -243,10 +282,10 @@ class EuropeanOption : public Option
 
 class AsianOption : public Option
 {
-    std::vector<double> generate_path(const std::vector<double> &Z) const
+    std::vector<double> generate_path(const std::vector<double> &Z,double t1,double t2) const
     {
         std::vector<double> daily_prices(252*Time); //to store daily prices.
-        const double t1 = (rate-0.5*sigma*sigma)*(1.0/252.0), t2 = sigma * sqrt(1.0/252.0);
+        //const double t1 = (rate-0.5*sigma*sigma)*(1.0/252.0), t2 = sigma * sqrt(1.0/252.0);
         // thread_local std::mt19937 mt(std::random_device{}());  
         // thread_local std::normal_distribution<double> nd(0,1);
         // Z=nd(mt);
@@ -263,23 +302,42 @@ class AsianOption : public Option
         std::mt19937 mt(seed == 0? std::random_device{}():seed);
         std::normal_distribution<double> nd(0,1);
         std::vector<double> Z(252*Time);
-        for(int j=0;j<loops;j++)
+        const double t1 = (rate-0.5*sigma*sigma)*(1.0/252.0), t2 = sigma * sqrt(1.0/252.0);
+        if(tag == "CALL")
         {
-            for(int k=0;k<252*Time;k++)
-                Z[k] = nd(mt);
-            double average = 0;
-            std::vector<double> prices = this->generate_path(Z);
-            for(int i =0;i<prices.size();i++)
+            for(int j=0;j<loops;j++)
             {
-                average+=prices[i];
-            }
-            average/=prices.size();
-            double payoff;
-            if(tag == "CALL")
+                for(int k=0;k<252*Time;k++)
+                    Z[k] = nd(mt);
+                double average = 0;
+                std::vector<double> prices = this->generate_path(Z,t1,t2);
+                for(int i =0;i<prices.size();i++)
+                {
+                    average+=prices[i];
+                }
+                average/=prices.size();
+                double payoff;
                 payoff = std::max(average-this->StrikingPrice,0.0);
-            else if(tag == "PUT")
+                total+=payoff;
+            }
+        }
+        else if(tag == "PUT")
+        {
+            for(int j=0;j<loops;j++)
+            {
+                for(int k=0;k<252*Time;k++)
+                    Z[k] = nd(mt);
+                double average = 0;
+                std::vector<double> prices = this->generate_path(Z,t1,t2);
+                for(int i =0;i<prices.size();i++)
+                {
+                    average+=prices[i];
+                }
+                average/=prices.size();
+                double payoff;
                 payoff = std::max(this->StrikingPrice-average,0.0);
-            total+=payoff;
+                total+=payoff;
+            }
         }
         result = total;
     }
