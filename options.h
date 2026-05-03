@@ -16,7 +16,7 @@ class Option
     protected:
     double StartingPrice, StrikingPrice, rate, sigma, Time;
     std :: string tag;
-    static ThreadPool pool;
+    // static ThreadPool pool;
     //virtual double generate_path() const= 0; //generate_path has a different return type for each option, and isn't ever being called directly from main. Therefore, we shouldn't make it a base class virtual function.
     virtual void worker(int loops,double &result, unsigned int seed =0) const = 0; //const ensures that the worker is read-only and doesn't modify the members, because during parallel processing, multiple threads will be accessing the same object instance at the same time to read those variables
     public:
@@ -36,25 +36,25 @@ class Option
         double total = 0;
         unsigned int num_threads = max_threads;
         std::vector<double> results(padding*num_threads); //padded vector. CPU cores read memory in chunks called Cache Lines. a single cache line can hold 8 of your results at once. Different cores want the same cache line at once. hence we store different results in different cache lines, using padding.
-        //std::vector<std::thread> threads(num_threads);
+        std::vector<std::thread> threads(num_threads);
         unsigned int base_loops = loops/num_threads;
         unsigned int remainder = loops%num_threads;
         for(int i = 0;i<num_threads;i++)
         {   
             //std::thread t(&Option::worker, this, base_loops + (i<remainder? 1:0), std::ref(results[padding*i]));
             int thread_loops = base_loops + (i < remainder ? 1 : 0);
-            // std::thread t([this, thread_loops, &result = results[padding * i], seed, i]() {
-            //     this->worker(thread_loops, result, seed == 0? seed: seed+i);
-            // }); //old implementation without threadpooling
-            Option::pool.addjob([this, thread_loops, &result = results[padding * i], seed, i]() {
+            std::thread t([this, thread_loops, &result = results[padding * i], seed, i]() {
                 this->worker(thread_loops, result, seed == 0? seed: seed+i);
-            }); //lambda function inside payoff has the same access rights as payoff, so in this case thread isn't the one calling the worker, which might fail otherwise due to class access modifiers.
-            //threads[i] = std::move(t);
+            }); //old implementation without threadpooling
+            // Option::pool.addjob([this, thread_loops, &result = results[padding * i], seed, i]() {
+            //     this->worker(thread_loops, result, seed == 0? seed: seed+i);
+            // }); //lambda function inside payoff has the same access rights as payoff, so in this case thread isn't the one calling the worker, which might fail otherwise due to class access modifiers.
+            threads[i] = std::move(t);
         }
-        Option::pool.wait_finished();
+        // Option::pool.wait_finished();
         for(int i = 0;i< num_threads;i++)
         {   
-            // threads[i].join();
+            threads[i].join();
             total+=results[padding*i];
         }
         double av = total/loops;
@@ -243,6 +243,7 @@ class EuropeanOption : public Option
         std::mt19937 mt(seed == 0? std::random_device{}():seed);  //the RNG engines were moved one level up to implement thread pooling in later stages (reusing old threads for new objects). also, the static/thread local have been dropped to avoid the same thread pool bug.
         std::normal_distribution<double> nd(0,1); //the main part was removing static/thread_local so that each task builds a fresh RNG engine. This ensures the engine restarts from the beginning of the sequence using the identical seed, guaranteeing matching paths for Common Random Numbers. However, moving the engine to worker was necessary for performance, as the engine will now be created once per 250000 loops instead of 250000 times (once each loop)
         // we don't move this one level higher (to payoff), because mt19937 is not thread safe, and if 4 threads are reaching 1 RNG engine at the same time in payoff, it will cause data race and scheduling chaos
+        //even when not using threadpooling, it's best to have the RNG engine individually with each worker, because when it is declared as thread local inside the generate path, there is a thread local storage (TLS) overhead. The object lives in the TLS segment instead of the stack, which is a little slower than the stack. Also it is a more complicated object than int or double, which adds to the overhead.
         const double t1 = (rate-0.5*sigma*sigma)*Time, t2 = sigma * sqrt(Time);
         if(tag == "CALL")
         {

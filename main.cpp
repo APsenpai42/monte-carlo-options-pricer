@@ -5,7 +5,7 @@
 #include<stdexcept>
 #include "threadpool.h"
 #include<chrono>
-ThreadPool Option::pool(std::thread::hardware_concurrency() == 0?4:std::thread::hardware_concurrency());
+// ThreadPool Option::pool(std::thread::hardware_concurrency() == 0?4:std::thread::hardware_concurrency());
 int main() {
         auto start = std::chrono::high_resolution_clock::now();
         unsigned int num_threads = std::thread::hardware_concurrency();
